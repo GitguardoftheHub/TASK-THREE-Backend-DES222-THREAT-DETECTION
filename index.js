@@ -59,7 +59,18 @@ app.get('/', async (req, res) => {
 
 app.post('/', async (req, res) => {  
   let result = await analyseImage(req.body['imageURL']);
-  res.json({ description: result });
+  
+  // Detect threat keywords in the Gemini response
+  const threatKeywords = ['threat', 'danger', 'alert', 'weapon', 'violence', 'attack', 'hazard', 'risk', 'unsafe'];
+  const lowerResult = result.toLowerCase();
+  const hasThreat = threatKeywords.some(keyword => lowerResult.includes(keyword));
+  
+  res.json({ 
+    description: result,
+    hasThreat: hasThreat,
+    isThreat: hasThreat,  // alternative flag name for frontend compatibility
+    alert: hasThreat
+  });
 })
 
 app.listen(port, () => {
