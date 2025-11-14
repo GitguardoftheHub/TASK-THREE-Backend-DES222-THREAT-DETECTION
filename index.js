@@ -57,16 +57,72 @@ app.get('/', async (req, res) => {
 })
 
 
+// Helper: interpret boolean-like values returned from other systems
+function parseBooleanLike(val) {
+  if (typeof val === 'boolean') return val;
+  if (typeof val === 'number') return val !== 0;
+  if (!val) return false;
+  const s = String(val).toLowerCase().trim();
+  return ['true', 'yes', '1', 'y'].includes(s);
+}
+
+// Helper: stricter, negation-aware threat detection from free-form description text
+function isThreatDescription(text) {
+  if (!text) return false;
+  const lower = String(text).toLowerCase();
+
+  // If the model explicitly negates a threat ("no threat", "not a threat", "not dangerous"), do not flag
+  const negationRegex = /\b(no|not|none|without|never|unlikely|n't)\b(?:(?:\s+\w+){0,6})\s*\b(threat|danger|weapon|gun|knife|bomb|explosive|attack|violence|shooting|stabbing|hostage)\b/;
+  if (negationRegex.test(lower)) return false;
+
+  // Strong keywords — immediate trigger
+  const strongRegex = /\b(weapon|gun|knife|bomb|explosive|rifle|pistol|shooting|stabbing|hostage|explosion|grenade|shooter)\b/;
+  if (strongRegex.test(lower)) return true;
+
+  // Weak keywords require an accompanying certainty/detection verb to avoid false positives
+  const weakRegex = /\b(threat|danger|risk|suspicious|hazard|unsafe)\b/;
+  const certaintyRegex = /\b(detected|detected a|detected an|confirmed|likely|possible|probable|suspected|observed|identified|found)\b/;
+  if (weakRegex.test(lower) && certaintyRegex.test(lower)) return true;
+
+  return false;
+}
+
 app.post('/', async (req, res) => {  
-  let result = await analyseImage(req.body['imageURL']);
-  
-  // Detect threat keywords in the Gemini response
-  const threatKeywords = ['threat', 'danger', 'alert', 'weapon', 'violence', 'attack', 'hazard', 'risk', 'unsafe'];
-  const lowerResult = result.toLowerCase();
-  const hasThreat = threatKeywords.some(keyword => lowerResult.includes(keyword));
-  
+  const imageURL = req.body && req.body['imageURL'];
+  let result = await analyseImage(imageURL);
+  const description = result || "Could not analyse image";
+
+  // Final decision: prefer any explicit boolean-like flags from upstream (if present),
+  // otherwise use the stricter textual analysis.
+  // Note: Gemini here returns only text, but this keeps compatibility if flags are added later.
+  let hasThreat = false;
+  try {
+    // If the analyseImage implementation is changed to return a structured object in future,
+    // handle that gracefully.
+    if (typeof result === 'object' && result !== null) {
+      // check known flag names
+      const possibleFlags = ['hasThreat', 'isThreat', 'alert', 'threat', 'danger'];
+      for (const f of possibleFlags) {
+        if (Object.prototype.hasOwnProperty.call(result, f)) {
+          hasThreat = parseBooleanLike(result[f]);
+          if (hasThreat) break;
+        }
+      }
+      // if description is present in the object, prefer textual analysis when flags are absent/false
+      if (!hasThreat && result.description) {
+        hasThreat = isThreatDescription(result.description);
+      }
+    } else {
+      hasThreat = isThreatDescription(description);
+    }
+  } catch (err) {
+    // fallback: do not trigger alarm on unexpected errors while parsing
+    console.error('Threat detection error:', err);
+    hasThreat = false;
+  }
+
   res.json({ 
-    description: result,
+    description: description,
     hasThreat: hasThreat,
     isThreat: hasThreat,  // alternative flag name for frontend compatibility
     alert: hasThreat
