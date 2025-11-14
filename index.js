@@ -122,12 +122,24 @@ app.post('/', async (req, res) => {
     hasThreat = false;
   }
 
-  res.json({ 
+  const response = {
     description: description,
     hasThreat: hasThreat,
     isThreat: hasThreat,  // alternative flag name for frontend compatibility
     alert: hasThreat
-  });
+  };
+
+  // If a threat is detected, send command to activate audio alert on frontend
+  if (hasThreat) {
+    response.command = {
+      type: 'THREAT_ALERT',
+      action: 'activate_audio_alert',
+      severity: 'high',
+      message: 'Threat detected. Activating audio alert.'
+    };
+  }
+
+  res.json(response);
 })
 
 app.listen(port, () => {
