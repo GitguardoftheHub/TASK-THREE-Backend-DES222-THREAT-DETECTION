@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const fetch = require('node-fetch');
+const http = require('http');
+const https = require('https');
 const cors = require('cors');
 
 const app = express();
@@ -28,13 +30,47 @@ async function analyseImage(dataURL) {
         ]
       };
 
-  const geminiURL=`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.SECRET_GOOGLE_GEMINI_KEY}`;
+  const geminiURL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.SECRET_GOOGLE_GEMINI_KEY}`;
+
+  // Use keep-alive agents to avoid TCP handshake overhead across multiple requests.
+  // These agents are reused across requests to reduce latency.
+  const httpAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 60000, maxSockets: 10 });
+  const httpsAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 60000, maxSockets: 10 });
+
+  const urlObj = new URL(geminiURL);
+  const agentToUse = urlObj.protocol === 'http:' ? httpAgent : httpsAgent;
+
+  // Abort the request if Gemini takes too long — helps us respond quicker to the frontend.
+  const timeoutMs = parseInt(process.env.GEMINI_TIMEOUT_MS) || 10000; // default 10s
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  let timeoutId = null;
+  if (controller) {
+    timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  }
 
   const response = await fetch(geminiURL, {
     method: 'post',
     body: JSON.stringify(body),
-    headers: {'Content-Type': 'application/json'}
+    headers: { 'Content-Type': 'application/json', 'Connection': 'keep-alive' },
+    agent: agentToUse,
+    signal: controller ? controller.signal : undefined
+  }).catch(err => {
+    if (err && err.name === 'AbortError') {
+      console.error(`Gemini request aborted after ${timeoutMs}ms`);
+      return null;
+    }
+    throw err;
   });
+
+  if (timeoutId) clearTimeout(timeoutId);
+
+  if (!response) return 'Could not reach Gemini (timeout)';
+  if (!response.ok) {
+    const txt = await response.text().catch(() => '');
+    console.error('Gemini error:', response.status, txt);
+    return 'Could not analyse image';
+  }
+
   const result = await response.json();
  
   // Gemini Flash generative api returns an array of 'candidates'
