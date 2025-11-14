@@ -81,7 +81,8 @@ function isThreatDescription(text) {
 
   // Weak keywords require an accompanying certainty/detection verb to avoid false positives
   const weakRegex = /\b(threat|danger|risk|suspicious|hazard|unsafe)\b/;
-  const certaintyRegex = /\b(detected|detected a|detected an|confirmed|likely|possible|probable|suspected|observed|identified|found)\b/;
+  // expanded certainty words to include softer phrasing often used by models
+  const certaintyRegex = /\b(detected|detected a|detected an|confirmed|likely|possible|probable|suspected|observed|identified|found|appears?|seems?|may|might|possibly|indicat(?:es|ing)?|suggest(?:s|ing)?|looks?)\b/;
   if (weakRegex.test(lower) && certaintyRegex.test(lower)) return true;
 
   return false;
